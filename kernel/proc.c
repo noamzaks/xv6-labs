@@ -684,3 +684,20 @@ procdump(void)
     printf("\n");
   }
 }
+
+// Returns the number of available of processes which aren't UNUSED.
+// Used for sysinfo.
+int
+proc_available(void)
+{
+  struct proc *p;
+  int result = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if (p->state != UNUSED) {
+      result++;
+    }
+  }
+
+  return result;
+}
