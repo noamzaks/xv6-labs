@@ -36,7 +36,9 @@ trapinithart(void)
 void
 usertrap(void)
 {
+  int scause;
   int which_dev = 0;
+  char *mem;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -50,7 +52,7 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if((scause = r_scause()) == 8){
     // system call
 
     if(killed(p))
@@ -67,8 +69,24 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (scause == 15) {
+    pte_t *pte = walk(p->pagetable, r_stval(), 0);
+    
+    if ((*pte & PTE_COW) == 0) {
+      printf("usertrap(): unexpected scause %p pid=%d\n", scause, p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      setkilled(p);
+    } else {
+      if((mem = kalloc()) == 0)
+        setkilled(p);
+      else {
+        memmove(mem, (char*)PTE2PA(*pte), PGSIZE);
+        kfree((void*)PTE2PA(*pte));
+        *pte = (PA2PTE(mem) | PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+      }
+    }
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    printf("usertrap(): unexpected scause %p pid=%d\n", scause, p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
   }
