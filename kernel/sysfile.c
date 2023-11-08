@@ -258,6 +258,8 @@ create(char *path, short type, short major, short minor)
     ilock(ip);
     if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
+    if(type == T_SYMLINK && ip->type == T_SYMLINK)
+      return ip;
     iunlockput(ip);
     return 0;
   }
@@ -308,7 +310,7 @@ sys_open(void)
   int fd, omode;
   struct file *f;
   struct inode *ip;
-  int n;
+  int n, linkcount = 0;
 
   argint(1, &omode);
   if((n = argstr(0, path, MAXPATH)) < 0)
@@ -327,7 +329,30 @@ sys_open(void)
       end_op();
       return -1;
     }
+
     ilock(ip);
+    while (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+      linkcount++;
+      if (linkcount > MAXLINK) {
+        iunlock(ip);
+        end_op();
+        return -1;
+      }
+      
+      if (readi(ip, 0, (uint64)path, 0, sizeof(path)) != sizeof(path)) {
+        iunlock(ip);
+        end_op();
+        return -1;
+      }
+
+      iunlock(ip);      
+      if((ip = namei(path)) == 0){
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+    }
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -348,7 +373,6 @@ sys_open(void)
     end_op();
     return -1;
   }
-
   if(ip->type == T_DEVICE){
     f->type = FD_DEVICE;
     f->major = ip->major;
@@ -501,5 +525,29 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], path[MAXPATH];
+  struct inode *dp;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+  dp = create(path, T_SYMLINK, 0, 0);
+  if (dp == 0) {
+    end_op();
+    return -1;
+  }
+
+  if (writei(dp, 0, (uint64)target, 0, sizeof(target)) != sizeof(target))
+    panic("symlink: writei");
+
+  iunlockput(dp);
+  end_op();
   return 0;
 }
